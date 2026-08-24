@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
-  <title>POC_WebAR_GeoSLAM</title>
+  <title>SparkVision_WebAR_Exhibition</title>
   <style>
     html, body { margin: 0; padding: 0; overflow: hidden; background: #000; }
     #ar-overlay-root {
@@ -35,15 +35,15 @@
     #adjust-row, #adjust-row2, #floor-row { display: flex; gap: 8px; }
     #adjust-row button, #adjust-row2 button, #floor-row button { padding: 8px 14px; font-size: 14px; background: #444; }
 
-    /* 模型切換按鈕：淺紫色底、白色外框、白色字，目前作用中的模型改灰底 */
+    /* 模型切換按鈕：預設(未選中)灰底、白色外框、白色字，目前作用中的模型改紫底 */
     #model-row { display: flex; gap: 12px; }
     #model-row button {
       width: 46px; height: 46px; padding: 0;
       display: flex; align-items: center; justify-content: center;
       border-radius: 50%; font-size: 18px;
-      background: #b388ff; border: 2px solid #ffffff; color: #ffffff;
+      background: #555555; border: 2px solid #ffffff; color: #ffffff;
     }
-    #model-row button.model-btn-active { background: #555555; }
+    #model-row button.model-btn-active { background: #b388ff; }
     #model-row button.pressed { filter: brightness(0.85); transform: scale(0.92); }
 
     #light-row {
@@ -80,6 +80,49 @@
       transform: scale(0.96);
     }
 
+    /* 操作說明按鈕：固定在畫面右上角，尺寸跟其他控制按鈕的高度相近；
+       AR/Preview 兩種模式都會顯示，內容由 showInfoButtonFor() 切換 */
+    #info-btn {
+      position: fixed; right: 16px; top: 24px;
+      width: 44px; height: 44px; padding: 0;
+      border: none; border-radius: 50%; background: transparent;
+      pointer-events: auto; z-index: 15;
+      transition: transform 0.08s ease, filter 0.08s ease;
+    }
+    #info-btn img { width: 100%; height: 100%; display: block; }
+    #info-btn.pressed { transform: scale(0.9); filter: brightness(0.85); }
+
+    /* 操作說明視窗：白底半透明，置中顯示，右上角有關閉按鈕 */
+    #info-panel {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 88%; max-width: 380px; box-sizing: border-box;
+      background: rgba(255, 255, 255, 0.94); color: #222;
+      border-radius: 14px; padding: 22px 20px 18px 20px;
+      pointer-events: auto; z-index: 20;
+      font-family: -apple-system, "Noto Sans TC", sans-serif;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
+    #info-panel h3 { margin: 0 0 14px 0; font-size: 16px; color: #333; }
+    #info-list { font-size: 14px; line-height: 1.9; }
+    #info-list .info-key {
+      display: inline-block; min-width: 150px;
+      font-weight: bold; color: #6a1b9a;
+      text-align: right; padding-right: 10px; box-sizing: border-box;
+    }
+    #info-close-btn {
+      position: absolute; top: 10px; right: 10px;
+      width: 28px; height: 28px; padding: 0;
+      border: none; border-radius: 50%;
+      background: #e0e0e0; color: #333;
+      font-size: 16px; font-weight: bold; line-height: 1;
+    }
+    #info-close-btn.pressed { transform: scale(0.9); filter: brightness(0.9); }
+
+    #info-content-ar p { margin: 0 0 10px 0; font-size: 14px; line-height: 1.6; }
+    #info-content-ar ol { margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.7; }
+    #info-content-ar li { margin-bottom: 6px; }
+    #info-content-ar strong { color: #6a1b9a; }
+
     #status-line { white-space: pre-line; }
   </style>
 </head>
@@ -87,32 +130,68 @@
 
   <div id="ar-overlay-root">
     <div id="overlay">
-      <div id="status-line">Not started yet</div>
+      <div id="status-line">尚未開始</div>
     </div>
 
     <div id="controls">
       <div id="model-row">
         <button id="model-btn-1" class="model-btn-active">1</button>
         <button id="model-btn-2">2</button>
+        <button id="model-btn-3">3</button>
       </div>
       <div id="adjust-row" style="display:none;">
-        <button id="y-up">Height ▲</button>
-        <button id="y-down">Height ▼</button>
+        <button id="y-up">高度 ▲</button>
+        <button id="y-down">高度 ▼</button>
         <button id="rot-minus">-5°</button>
         <button id="rot-plus">+5°</button>
       </div>
       <div id="floor-row" style="display:none;">
-        <button id="floor-up">Upstairs ▲</button>
-        <button id="floor-down">Downstairs ▼</button>
+        <button id="floor-up">上一層 ▲</button>
+        <button id="floor-down">下一層 ▼</button>
       </div>
       <div id="adjust-row2" style="display:none;">
-        <button id="recalibrate-btn">Calibrate by GPS</button>
-        <button id="place-here-btn">Place Here</button>
+        <button id="place-here-btn">重新放置</button>
       </div>
-      <button id="start-btn">Start AR Experience</button>
+      <button id="start-btn">開始 AR 體驗</button>
       <div id="light-row" style="display:none;">
-        <label for="light-angle-slider">Light Angle: <span id="light-angle-value">0</span>°</label>
+        <label for="light-angle-slider">燈光角度：<span id="light-angle-value">0</span>°</label>
         <input type="range" id="light-angle-slider" min="0" max="360" step="5" value="0">
+      </div>
+    </div>
+
+    <!-- 操作說明按鈕：Preview 模式顯示相機操作說明，AR 模式顯示模型狀態/疑難排解說明(內容不同) -->
+    <button id="info-btn" style="display:none;">
+      <img src="./WebAR_icon_info.png" alt="說明" />
+    </button>
+    <div id="info-panel" style="display:none;">
+      <button id="info-close-btn">&times;</button>
+
+      <div id="info-content-preview">
+        <h3>相機操作說明</h3>
+        <div id="info-list">
+          <div><span class="info-key">W：</span>向前移動</div>
+          <div><span class="info-key">A：</span>向左平移</div>
+          <div><span class="info-key">S：</span>向後移動</div>
+          <div><span class="info-key">D：</span>向右平移</div>
+          <div><span class="info-key">Q：</span>向下移動</div>
+          <div><span class="info-key">E：</span>向上移動</div>
+          <div><span class="info-key">滑鼠左鍵：</span>原地環顧視角</div>
+          <div><span class="info-key">滑鼠右鍵：</span>環繞模型旋轉</div>
+          <div><span class="info-key">Shift + 右鍵：</span>平移視角</div>
+          <div><span class="info-key">Shift + WASD/QE：</span>加速飛行移動</div>
+        </div>
+      </div>
+
+      <div id="info-content-ar" style="display:none;">
+        <h3>模型狀態與疑難排解</h3>
+        <p>畫面上方狀態文字的最後一行，會顯示目前的模型狀態與操作提示。</p>
+        <p>若無法正確看到模型，請嘗試以下步驟：</p>
+        <ol>
+          <li>模型檔案較大，請耐心等候載入完成。</li>
+          <li>若畫面左上角顯示<strong>「請將手機對準地板/桌面掃描」</strong>，請依照指示操作。</li>
+          <li>點擊<strong>「重新放置」</strong>，將模型直接放置在你的正前方。</li>
+          <li>若以上方法皆無效，請重新整理頁面或檢查網路連線。</li>
+        </ol>
       </div>
     </div>
   </div>
@@ -131,34 +210,29 @@
     import { OrbitControls } from 'https://unpkg.com/three@0.158.0/examples/jsm/controls/OrbitControls.js';
 
     // ---------------------------------------------------------------
-    // 專案設定：目標建物 GPS 座標與模型資訊
+    // 專案設定：模型資訊
+    // 本專案將於各展場巡迴展示，不綁定特定場域座標，因此不使用 GPS 定位，
+    // 模型一律採用 hit-test 偵測到的平面位置，直接放置於使用者前方。
     // ---------------------------------------------------------------
-    const TARGET_LAT = 24.183192;
-    const TARGET_LON = 120.613790;
     const MODEL_URL = './townhouse.glb';
     const MODEL_URL2 = './Chanley.glb';
+    const MODEL_URL3 = './townhouse_mat.glb';
     const MODEL_SCALE = 1; // 若模型單位是公尺，先從 1 開始測試，依實際狀況調整
 
     // 可切換模型清單：key 對應按鈕與 models{} 的存放位置，url/label 用於載入與訊息顯示
     const MODEL_CONFIGS = {
-      townhouse: { url: MODEL_URL, label: 'townhouse.glb' },
-      chanley:   { url: MODEL_URL2, label: 'Chanley.glb' }
+      townhouse:      { url: MODEL_URL,  label: 'townhouse.glb' },
+      chanley:        { url: MODEL_URL2, label: 'Chanley.glb' },
+      townhouse_mat:  { url: MODEL_URL3, label: 'townhouse_mat.glb' }
     };
-
-    // 羅盤讀值在不同裝置/瀏覽器上常有系統性偏移(常見 ±15~30°)。
-    // 可用「Calibrate by GPS」搭配旋轉/高度按鈕現場修正，
-    // 若需要調整羅盤基礎偏移，可直接修改這個常數後重新部署。
-    let headingOffset = 0;
 
     // ---------------------------------------------------------------
     // 狀態變數
     // ---------------------------------------------------------------
-    let userLat = null, userLon = null, gpsAccuracy = null;
-    let currentHeading = null;
     let model = null;              // 目前作用中(顯示中)的模型物件，永遠指向 models[activeModelKey] 載入完成後的物件
     let modelPlaced = false;
     let activeModelKey = 'townhouse'; // 預設啟用 townhouse，對應按鈕「1」
-    const models = {}; // key -> { object3D, fitData }，兩個模型都會各自載入並常駐在場景中，用 visible 切換
+    const models = {}; // key -> { object3D, fitData }，三個模型都會各自載入並常駐在場景中，用 visible 切換
 
     let xrSession = null;
     let hitTestSource = null;
@@ -172,9 +246,9 @@
     let lastHitPosition = null;      // { x, y, z } 最近一次偵測到的平面位置
     let planeEverDetected = false;   // 用來只觸發一次「Plane detected successfully」訊息
 
-    // 畫面最下面一行的訊息，預設不會被 GPS/羅盤的數值更新覆蓋掉，
-    // 只有明確呼叫 updateStatus(newMessage) 時才會更新，確保訊息不會瞬間被洗掉
-    let lastMessage = 'Not started yet';
+    // 畫面最下面一行的訊息，只有明確呼叫 updateStatus(newMessage) 時才會更新，
+    // 確保訊息不會被其他畫面更新瞬間洗掉
+    let lastMessage = '尚未開始';
 
     const statusEl = document.getElementById('status-line');
     const startBtn = document.getElementById('start-btn');
@@ -186,6 +260,12 @@
     const lightAngleValue = document.getElementById('light-angle-value');
     const modelBtn1 = document.getElementById('model-btn-1'); // townhouse.glb
     const modelBtn2 = document.getElementById('model-btn-2'); // Chanley.glb
+    const modelBtn3 = document.getElementById('model-btn-3'); // townhouse_mat.glb
+    const infoBtn = document.getElementById('info-btn');
+    const infoPanel = document.getElementById('info-panel');
+    const infoCloseBtn = document.getElementById('info-close-btn');
+    const infoContentPreview = document.getElementById('info-content-preview');
+    const infoContentAr = document.getElementById('info-content-ar');
     lightAngleSlider.addEventListener('input', () => {
       lightAngleDeg = Number(lightAngleSlider.value);
       lightAngleValue.textContent = lightAngleDeg;
@@ -195,77 +275,14 @@
       if (newMessage !== undefined) {
         lastMessage = newMessage;
       }
-      const dist = (userLat !== null) ? haversineDistance(userLat, userLon, TARGET_LAT, TARGET_LON).toFixed(1) + ' m' : '-';
-      const brng = (userLat !== null) ? bearing(userLat, userLon, TARGET_LAT, TARGET_LON).toFixed(0) + '°' : '-';
-      statusEl.textContent =
-        `GPS: ${userLat ? userLat.toFixed(6) : '-'}, ${userLon ? userLon.toFixed(6) : '-'} (accuracy ${gpsAccuracy ? gpsAccuracy.toFixed(0)+'m' : '-'})\n` +
-        `Target distance: ${dist}   Bearing: ${brng}\n` +
-        `Compass heading: ${currentHeading !== null ? currentHeading.toFixed(0)+'°' : '-'}   Offset: ${headingOffset}°\n` +
-        lastMessage;
+      statusEl.textContent = lastMessage;
     }
 
     // ---------------------------------------------------------------
-    // 地理計算：距離(Haversine)與方位角(Bearing)
+    // 角度換算工具函式(旋轉按鈕使用)
     // ---------------------------------------------------------------
     function toRad(deg) { return deg * Math.PI / 180; }
     function toDeg(rad) { return rad * 180 / Math.PI; }
-
-    function haversineDistance(lat1, lon1, lat2, lon2) {
-      const R = 6371000;
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-      const a = Math.sin(dLat / 2) ** 2 +
-                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    }
-
-    function bearing(lat1, lon1, lat2, lon2) {
-      const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
-      const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
-                Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
-      const brng = toDeg(Math.atan2(y, x));
-      return (brng + 360) % 360; // 0-360, 0=正北, 順時鐘
-    }
-
-    // ---------------------------------------------------------------
-    // GPS：持續追蹤使用者位置
-    // ---------------------------------------------------------------
-    function startGeolocation() {
-      return new Promise((resolve, reject) => {
-        if (!navigator.geolocation) {
-          reject(new Error('Geolocation not supported by this browser'));
-          return;
-        }
-        navigator.geolocation.watchPosition(
-          (pos) => {
-            userLat = pos.coords.latitude;
-            userLon = pos.coords.longitude;
-            gpsAccuracy = pos.coords.accuracy;
-            updateStatus(); // 不帶參數 = 只刷新數值列，不會動到最後一行的訊息
-            resolve();
-          },
-          (err) => {
-            console.error('Geolocation error', err);
-            reject(err);
-          },
-          { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
-        );
-      });
-    }
-
-    // ---------------------------------------------------------------
-    // 羅盤：取得裝置目前朝向真北的夾角(Android Chrome: deviceorientationabsolute)
-    // ---------------------------------------------------------------
-    function startCompass() {
-      window.addEventListener('deviceorientationabsolute', (event) => {
-        if (event.alpha === null) return;
-        // 注意：alpha 的方向定義在不同裝置上可能相反，
-        // 如發現模型方向錯誤，可用「-5°/+5°」旋轉按鈕現場校正
-        currentHeading = (event.alpha + headingOffset + 360) % 360;
-        updateStatus();
-      }, true);
-    }
 
     // ---------------------------------------------------------------
     // 按鈕按壓視覺回饋：pointerdown 轉換樣式、pointerup/leave/cancel 還原
@@ -279,56 +296,57 @@
       btn.addEventListener('pointercancel', release);
     }
     document.querySelectorAll('#controls button').forEach(addPressEffect);
+    // info-btn/info-close-btn 不在 #controls 底下，另外手動註冊按壓效果
+    addPressEffect(infoBtn);
+    addPressEffect(infoCloseBtn);
+
+    infoBtn.addEventListener('click', () => {
+      infoPanel.style.display = 'block';
+    });
+    infoCloseBtn.addEventListener('click', () => {
+      infoPanel.style.display = 'none';
+    });
+
+    // 依目前模式(AR/Preview)切換操作說明按鈕要顯示的內容，兩種模式的操作方式完全不同，
+    // 所以說明文字也不一樣：Preview 是滑鼠鍵盤相機操作說明，AR 是模型狀態/疑難排解說明
+    function showInfoButtonFor(mode) {
+      infoBtn.style.display = 'block';
+      infoContentPreview.style.display = (mode === 'preview') ? 'block' : 'none';
+      infoContentAr.style.display = (mode === 'ar') ? 'block' : 'none';
+    }
 
     document.getElementById('y-up').addEventListener('click', () => {
       if (!model) return;
       model.position.y += 0.1;
-      updateStatus('Height raised by 0.1m (current Y: ' + model.position.y.toFixed(2) + ')');
+      updateStatus('高度已提高 0.1m（目前 Y：' + model.position.y.toFixed(2) + '）');
     });
     document.getElementById('y-down').addEventListener('click', () => {
       if (!model) return;
       model.position.y -= 0.1;
-      updateStatus('Height lowered by 0.1m (current Y: ' + model.position.y.toFixed(2) + ')');
+      updateStatus('高度已降低 0.1m（目前 Y：' + model.position.y.toFixed(2) + '）');
     });
     document.getElementById('rot-plus').addEventListener('click', () => {
       if (!model) return;
       model.rotation.y += toRad(5);
-      updateStatus('Rotated +5° (clockwise)');
+      updateStatus('已旋轉 +5°（順時針）');
     });
     document.getElementById('rot-minus').addEventListener('click', () => {
       if (!model) return;
       model.rotation.y -= toRad(5);
-      updateStatus('Rotated -5° (counter-clockwise)');
+      updateStatus('已旋轉 -5°（逆時針）');
     });
     document.getElementById('floor-up').addEventListener('click', () => {
       if (!model) return;
       model.position.y -= 3;
-      updateStatus('Moved up one floor (+3m, current Y: ' + model.position.y.toFixed(2) + ')');
+      updateStatus('已上移一層（+3m，目前 Y：' + model.position.y.toFixed(2) + '）');
     });
     document.getElementById('floor-down').addEventListener('click', () => {
       if (!model) return;
       model.position.y += 3;
-      updateStatus('Moved down one floor (-3m, current Y: ' + model.position.y.toFixed(2) + ')');
-    });
-    document.getElementById('recalibrate-btn').addEventListener('click', () => {
-      if (lastHitPosition && lastCameraPosition && lastCameraForward) {
-        placeModelFromCache();
-      } else {
-        updateStatus('No plane detected yet. Cannot calibrate.');
-      }
+      updateStatus('已下移一層（-3m，目前 Y：' + model.position.y.toFixed(2) + '）');
     });
     document.getElementById('place-here-btn').addEventListener('click', () => {
-      if (!lastHitPosition || !lastCameraPosition) { updateStatus('No plane detected yet. Cannot place model.'); return; }
-      if (!model) { updateStatus('Model is not loaded yet.'); return; }
-
-      model.position.set(lastHitPosition.x, lastHitPosition.y, lastHitPosition.z);
-      model.rotation.y = Math.atan2(
-        lastCameraPosition.x - lastHitPosition.x,
-        lastCameraPosition.z - lastHitPosition.z
-      );
-      model.visible = true;
-      modelPlaced = true;
-      updateStatus('GPS ignored. Model placed at the currently detected surface.');
+      placeModelAtHitPosition('已將模型重新放置於目前偵測到的平面上。');
     });
 
     // ---------------------------------------------------------------
@@ -602,7 +620,7 @@
     const loader = new GLTFLoader();
 
     // 依 key(對應 MODEL_CONFIGS) 載入單一模型，處理完邊緣線/陰影/雙面設定後存進 models[key]。
-    // 兩個模型都會被載入並常駐在場景中(用 visible 切換顯示)，只有目前作用中的那個才會套用到
+    // 三個模型都會被載入並常駐在場景中(用 visible 切換顯示)，只有目前作用中的那個才會套用到
     // 場景顯示狀態與光源/陰影參數上，避免背景載入完的另一個模型突然蓋過畫面。
     function loadModel(key) {
       const config = MODEL_CONFIGS[key];
@@ -631,29 +649,31 @@
             model = root;
             applyFitData(models[key].fitData);
             if (previewModeActive) {
-              model.visible = true; // 預覽模式沒有 GPS/hit-test 流程，模型載入完就直接顯示
+              model.visible = true; // 預覽模式沒有 hit-test 流程，模型載入完就直接顯示
+              updateStatus(config.label + ' 已載入，進入桌面預覽模式（拖曳環繞、滾輪縮放、WASD+QE 飛行，按住 Shift 加速）。');
+            } else {
+              updateStatus(config.label + ' 已載入，等待 AR 平面偵測中。');
             }
-            updateStatus(config.label + ' loaded. Waiting for AR plane detection.');
           } else {
-            updateStatus(config.label + ' loaded in the background.');
+            updateStatus(config.label + ' 已在背景載入完成。');
           }
         },
         undefined,
         (err) => {
           console.error('GLTF load error', err);
-          updateStatus('Failed to load ' + config.label + '. Please check the file path.');
+          updateStatus('載入 ' + config.label + ' 失敗，請確認檔案路徑是否正確。');
         }
       );
     }
 
     // 切換到 key 對應的模型：把目前模型的位置/旋轉/顯示狀態複製過去，讓使用者感覺
-    // 是「同一個已放置好的座標換了一個模型外觀」，不需要重新走一次 GPS/hit-test 流程。
+    // 是「同一個已放置好的座標換了一個模型外觀」，不需要重新走一次 hit-test 流程。
     function switchToModel(key) {
       if (key === activeModelKey) return;
 
       const entry = models[key];
       if (!entry) {
-        updateStatus(MODEL_CONFIGS[key].label + ' is still loading, please wait...');
+        updateStatus(MODEL_CONFIGS[key].label + ' 仍在載入中，請稍候...');
         return;
       }
 
@@ -674,22 +694,25 @@
       model = newModel;
       activeModelKey = key;
       applyFitData(entry.fitData);
-      updateHemiLightForActiveModel(); // 切到 Chanley 加強環境光，切回 townhouse 還原 profile 預設值
+      updateHemiLightForActiveModel(); // 切到 Chanley 加強環境光，切回其他模型還原 profile 預設值
       updateModelButtonsUI();
-      updateStatus('Switched to ' + MODEL_CONFIGS[key].label + '.');
+      updateStatus('已切換至 ' + MODEL_CONFIGS[key].label + '。');
     }
 
-    // 按鈕視覺狀態：目前作用中的模型改灰底(model-btn-active)，另一顆維持淺紫色
+    // 按鈕視覺狀態：目前作用中的模型改紫底(model-btn-active)，其餘維持灰底
     function updateModelButtonsUI() {
       modelBtn1.classList.toggle('model-btn-active', activeModelKey === 'townhouse');
       modelBtn2.classList.toggle('model-btn-active', activeModelKey === 'chanley');
+      modelBtn3.classList.toggle('model-btn-active', activeModelKey === 'townhouse_mat');
     }
 
     modelBtn1.addEventListener('click', () => switchToModel('townhouse'));
     modelBtn2.addEventListener('click', () => switchToModel('chanley'));
+    modelBtn3.addEventListener('click', () => switchToModel('townhouse_mat'));
 
     loadModel('townhouse');
     loadModel('chanley');
+    loadModel('townhouse_mat');
 
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
@@ -698,33 +721,37 @@
     });
 
     // ---------------------------------------------------------------
-    // 啟動流程：權限確認 -> WebXR session -> hit-test -> 放置模型
+    // 啟動流程：WebXR session -> hit-test -> 放置模型(不需 GPS/羅盤權限)
     // ---------------------------------------------------------------
     startBtn.addEventListener('click', onStart);
 
+    // 裝置/瀏覽器不支援 AR、要 fallback 到 Preview 模式時使用。
+    // 模型從頁面載入當下就開始背景載入，跟使用者何時按下 Start 按鈕、AR 支援與否是分開的兩條時間線。
+    // 這個函式呼叫的當下，如果目前作用中的模型(model)剛好已經載入完成，代表「還在載入」這件事
+    // 已經不成立了，直接顯示「可以開始操作」的訊息即可，不需要再多解釋一次「為什麼會切到 Preview 模式」；
+    // 如果還沒載入完，才需要同時說明「還在載入」跟「為什麼會切到 Preview 模式」，避免使用者誤以為畫面卡住。
+    function switchToPreviewModeWithStatus(reasonText) {
+      if (model) {
+        updateStatus('模型已載入，進入桌面預覽模式（拖曳環繞、滾輪縮放、WASD+QE 飛行，按住 Shift 加速）。');
+      } else {
+        updateStatus('模型仍在載入中... ' + reasonText + ' 正在切換至桌面預覽模式。');
+      }
+      startPreviewMode();
+    }
+
     async function onStart() {
       startBtn.disabled = true;
-      startBtn.textContent = 'Starting...';
+      startBtn.textContent = '啟動中...';
 
       if (!navigator.xr) {
-        updateStatus('WebXR not supported by this browser. Switching to desktop preview mode (drag to orbit, scroll to zoom, WASD+QE to fly, hold Shift to move faster).');
-        startPreviewMode();
+        switchToPreviewModeWithStatus('此瀏覽器不支援 WebXR。');
         return;
       }
 
       const supported = await navigator.xr.isSessionSupported('immersive-ar');
       if (!supported) {
-        updateStatus('immersive-ar not supported on this device/browser. Switching to desktop preview mode (drag to orbit, scroll to zoom, WASD+QE to fly, hold Shift to move faster).');
-        startPreviewMode();
+        switchToPreviewModeWithStatus('此裝置/瀏覽器不支援 immersive-ar。');
         return;
-      }
-
-      try {
-        updateStatus('Requesting GPS permission...');
-        await startGeolocation();
-        startCompass();
-      } catch (e) {
-        updateStatus('Failed to get GPS permission. The model can still be shown, but not positioned by GPS.');
       }
 
       try {
@@ -746,13 +773,14 @@
         floorRow.style.display = 'flex';
         adjustRow2.style.display = 'flex';
         lightRow.style.display = 'flex';
+        showInfoButtonFor('ar'); // AR 模式也顯示說明按鈕，內容改成模型狀態/疑難排解說明
 
         renderer.setAnimationLoop(onXRFrame);
       } catch (e) {
         console.error(e);
-        updateStatus('Failed to start WebXR session: ' + e.message);
+        updateStatus('啟動 WebXR session 失敗：' + e.message);
         startBtn.disabled = false;
-        startBtn.textContent = 'Start AR Experience';
+        startBtn.textContent = '開始 AR 體驗';
       }
     }
 
@@ -765,11 +793,13 @@
       if (model) model.visible = false;
       startBtn.style.display = 'block';
       startBtn.disabled = false;
-      startBtn.textContent = 'Start AR Experience';
+      startBtn.textContent = '開始 AR 體驗';
       adjustRow.style.display = 'none';
       floorRow.style.display = 'none';
       adjustRow2.style.display = 'none';
       lightRow.style.display = 'none';
+      infoBtn.style.display = 'none';
+      infoPanel.style.display = 'none';
       renderer.setAnimationLoop(null);
     }
 
@@ -895,11 +925,14 @@
       previewModeActive = true;
       applyLightingProfile('preview');
       startBtn.style.display = 'none';
-      adjustRow.style.display = 'flex';   // 高度/旋轉按鈕在預覽模式一樣可以用，方便檢查模型各角度
-      floorRow.style.display = 'flex';
       lightRow.style.display = 'flex';    // 光線角度滑桿在預覽模式也能用，方便檢查光照效果
-      // GPS 校準/放置按鈕在預覽模式沒有意義(沒有真實定位)，維持隱藏
+      // Height/旋轉/樓層按鈕是給 AR 現場放置模型用的，預覽模式沒有實際放置流程，
+      // 用滑鼠 WASD+QE 就能自由檢視模型任何角度/樓層，這些按鈕留著沒有意義，改為隱藏
+      adjustRow.style.display = 'none';
+      floorRow.style.display = 'none';
+      // 「重新放置」按鈕是給 AR 現場用 hit-test 手動重新放置模型的，預覽模式沒有實際放置流程，維持隱藏
       adjustRow2.style.display = 'none';
+      showInfoButtonFor('preview'); // 操作說明按鈕在 Preview/AR 都會顯示，但內容不同；這裡切換成相機操作說明
 
       scene.background = new THREE.Color(0xdddddd); // 給一個中性背景色方便看清楚模型輪廓與邊緣線
 
@@ -970,10 +1003,10 @@
 
           if (!modelPlaced) {
             planeEverDetected = true;
-            placeModelFromCache('Plane detected successfully. Model anchored — stability now relies entirely on device SLAM tracking.');
+            placeModelAtHitPosition('已偵測到平面，模型已放置於你的正前方 — 之後的穩定性完全依賴裝置的 SLAM 追蹤。');
           }
         } else if (!modelPlaced) {
-          updateStatus('Point your phone at the floor/table to scan for a surface...');
+          updateStatus('請將手機對準地板/桌面掃描以偵測平面...');
         }
       }
 
@@ -982,31 +1015,24 @@
     }
 
     // ---------------------------------------------------------------
-    // 核心邏輯：依 GPS 距離/方位角 + 羅盤朝向，計算模型在 XR 世界座標中的位置
+    // 核心邏輯：直接使用 hit-test 偵測到的平面位置，把模型放在使用者正前方。
+    // 本專案巡迴各展場展示，不綁定特定場域座標，因此不使用 GPS/羅盤計算，
+    // 偵測到平面就自動呼叫這個函式；「重新放置」按鈕也是呼叫同一個函式，
+    // 讓使用者隨時可以手動重新放到目前偵測到的平面上。
     // 只使用快取的數值/向量，不依賴任何 XRFrame 物件，按鈕可安全重複呼叫
     // ---------------------------------------------------------------
-    function placeModelFromCache(successMessage) {
-      if (!model) { updateStatus('Model is still loading...'); return; }
-      if (userLat === null || userLon === null) { updateStatus('Waiting for GPS...'); return; }
-      if (currentHeading === null) { updateStatus('Waiting for compass data...'); return; }
-      if (!lastCameraPosition || !lastCameraForward || !lastHitPosition) { updateStatus('Waiting for plane detection...'); return; }
+    function placeModelAtHitPosition(successMessage) {
+      if (!model) { updateStatus('模型仍在載入中...'); return; }
+      if (!lastHitPosition || !lastCameraPosition) { updateStatus('尚未偵測到平面，無法放置模型。'); return; }
 
-      const distance = haversineDistance(userLat, userLon, TARGET_LAT, TARGET_LON);
-      const targetBearing = bearing(userLat, userLon, TARGET_LAT, TARGET_LON);
-
-      const relativeAngle = toRad(targetBearing - currentHeading);
-      const targetDir = lastCameraForward.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), -relativeAngle);
-
-      model.position.set(
-        lastCameraPosition.x + targetDir.x * distance,
-        lastHitPosition.y, // 高度使用 hit-test 偵測到的平面 Y 座標
-        lastCameraPosition.z + targetDir.z * distance
+      model.position.set(lastHitPosition.x, lastHitPosition.y, lastHitPosition.z);
+      model.rotation.y = Math.atan2(
+        lastCameraPosition.x - lastHitPosition.x,
+        lastCameraPosition.z - lastHitPosition.z
       );
-      model.rotation.y = Math.atan2(targetDir.x, targetDir.z);
-
       model.visible = true;
       modelPlaced = true;
-      updateStatus(successMessage || 'Model anchored — stability now relies entirely on device SLAM tracking.');
+      updateStatus(successMessage || '模型已放置於目前偵測到的平面上。');
     }
   </script>
 </body>
