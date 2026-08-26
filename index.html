@@ -184,10 +184,10 @@
 
       <div id="info-content-ar" style="display:none;">
         <h3>模型狀態與疑難排解</h3>
-        <p>畫面上方狀態文字的最後一行，會顯示目前的模型狀態與操作提示。</p>
+        <p>畫面上方的狀態文字顯示目前的模型狀態與操作提示。</p>
         <p>若無法正確看到模型，請嘗試以下步驟：</p>
         <ol>
-          <li>模型檔案較大，請耐心等候載入完成。</li>
+          <li>模型載入速度依照網路狀況而不同，請耐心等候載入完成。</li>
           <li>若畫面左上角顯示<strong>「請將手機對準地板/桌面掃描」</strong>，請依照指示操作。</li>
           <li>點擊<strong>「重新放置」</strong>，將模型直接放置在你的正前方。</li>
           <li>若以上方法皆無效，請重新整理頁面或檢查網路連線。</li>
@@ -215,14 +215,14 @@
     // 模型一律採用 hit-test 偵測到的平面位置，直接放置於使用者前方。
     // ---------------------------------------------------------------
     const MODEL_URL = './townhouse.glb';
-    const MODEL_URL2 = './Chanley.glb';
+    const MODEL_URL2 = './townhouse_mep.glb';
     const MODEL_URL3 = './townhouse_mat.glb';
     const MODEL_SCALE = 1; // 若模型單位是公尺，先從 1 開始測試，依實際狀況調整
 
     // 可切換模型清單：key 對應按鈕與 models{} 的存放位置，url/label 用於載入與訊息顯示
     const MODEL_CONFIGS = {
       townhouse:      { url: MODEL_URL,  label: 'townhouse.glb' },
-      chanley:        { url: MODEL_URL2, label: 'Chanley.glb' },
+      townhouse_mep:  { url: MODEL_URL2, label: 'townhouse_mep.glb' },
       townhouse_mat:  { url: MODEL_URL3, label: 'townhouse_mat.glb' }
     };
 
@@ -259,7 +259,7 @@
     const lightAngleSlider = document.getElementById('light-angle-slider');
     const lightAngleValue = document.getElementById('light-angle-value');
     const modelBtn1 = document.getElementById('model-btn-1'); // townhouse.glb
-    const modelBtn2 = document.getElementById('model-btn-2'); // Chanley.glb
+    const modelBtn2 = document.getElementById('model-btn-2'); // townhouse_mep.glb
     const modelBtn3 = document.getElementById('model-btn-3'); // townhouse_mat.glb
     const infoBtn = document.getElementById('info-btn');
     const infoPanel = document.getElementById('info-panel');
@@ -363,7 +363,7 @@
     const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 1000);
 
     // 環境光(Hemisphere)，均勻沒有方向性陰影，作為基礎照明
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xcccccc, 0.9);
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xcccccc, 1.0);
     scene.add(hemiLight);
 
     // 單一方向光，角度可用畫面下方的滑桿(或 +5°/-5° 按鈕)即時旋轉調整
@@ -384,20 +384,16 @@
     const USE_VSM_SHADOWS = false;
 
     const LIGHTING_PROFILES = {
-      ar: { mainIntensity: 1.2, hemiIntensity: 0.6, shadows: true },
-      preview: { mainIntensity: 1.6, hemiIntensity: 0.35, shadows: true }
+      ar: { mainIntensity: 1.2, hemiIntensity: 1.0, shadows: true },
+      preview: { mainIntensity: 1.6, hemiIntensity: 1.0, shadows: true }
     };
 
     let currentProfileName = 'ar'; // 記錄目前套用的是哪一組光照 profile，切換模型時才知道「預設值」該回到多少
-    const CHANLEY_HEMI_BOOST = 2; // 切到 Chanley.glb 時，環境光(HemisphereLight)要提升到的強度
 
-    // 環境光(HemisphereLight)強度的單一決策點：預設沿用目前光照 profile 的基礎值，
-    // 但只要「目前作用中的模型」是 Chanley.glb，就改用加強值；切回 townhouse 就自動還原成 profile 預設值。
+    // 環境光(HemisphereLight)強度的單一決策點：統一沿用目前光照 profile 的基礎值。
     // 統一寫在這裡呼叫，而不是在各處分別設定 hemiLight.intensity，避免之後不同地方各自寫死數字互相打架。
     function updateHemiLightForActiveModel() {
-      hemiLight.intensity = (activeModelKey === 'chanley')
-        ? CHANLEY_HEMI_BOOST
-        : LIGHTING_PROFILES[currentProfileName].hemiIntensity;
+      hemiLight.intensity = LIGHTING_PROFILES[currentProfileName].hemiIntensity;
     }
 
     function applyLightingProfile(profileName) {
@@ -694,7 +690,7 @@
       model = newModel;
       activeModelKey = key;
       applyFitData(entry.fitData);
-      updateHemiLightForActiveModel(); // 切到 Chanley 加強環境光，切回其他模型還原 profile 預設值
+      updateHemiLightForActiveModel(); // 依目前光照 profile 套用環境光基礎值
       updateModelButtonsUI();
       updateStatus('已切換至 ' + MODEL_CONFIGS[key].label + '。');
     }
@@ -702,16 +698,16 @@
     // 按鈕視覺狀態：目前作用中的模型改紫底(model-btn-active)，其餘維持灰底
     function updateModelButtonsUI() {
       modelBtn1.classList.toggle('model-btn-active', activeModelKey === 'townhouse');
-      modelBtn2.classList.toggle('model-btn-active', activeModelKey === 'chanley');
+      modelBtn2.classList.toggle('model-btn-active', activeModelKey === 'townhouse_mep');
       modelBtn3.classList.toggle('model-btn-active', activeModelKey === 'townhouse_mat');
     }
 
     modelBtn1.addEventListener('click', () => switchToModel('townhouse'));
-    modelBtn2.addEventListener('click', () => switchToModel('chanley'));
+    modelBtn2.addEventListener('click', () => switchToModel('townhouse_mep'));
     modelBtn3.addEventListener('click', () => switchToModel('townhouse_mat'));
 
     loadModel('townhouse');
-    loadModel('chanley');
+    loadModel('townhouse_mep');
     loadModel('townhouse_mat');
 
     window.addEventListener('resize', () => {
