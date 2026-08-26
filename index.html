@@ -80,6 +80,18 @@
       transform: scale(0.96);
     }
 
+    /* 邊緣線開關按鈕：位於操作說明按鈕左側，尺寸/樣式完全比照 #info-btn，
+       按下時套用同一套「變灰」按壓回饋(.pressed)，與其他控制按鈕的手感一致 */
+    #edge-btn {
+      position: fixed; right: 68px; top: 24px;
+      width: 44px; height: 44px; padding: 0;
+      border: none; border-radius: 50%; background: transparent;
+      pointer-events: auto; z-index: 15;
+      transition: transform 0.08s ease, filter 0.08s ease;
+    }
+    #edge-btn img { width: 100%; height: 100%; display: block; }
+    #edge-btn.pressed { transform: scale(0.9); filter: brightness(0.85); }
+
     /* 操作說明按鈕：固定在畫面右上角，尺寸跟其他控制按鈕的高度相近；
        AR/Preview 兩種模式都會顯示，內容由 showInfoButtonFor() 切換 */
     #info-btn {
@@ -158,6 +170,11 @@
         <input type="range" id="light-angle-slider" min="0" max="360" step="5" value="0">
       </div>
     </div>
+
+    <!-- 邊緣線開關按鈕：控制邊緣線顯示/隱藏，預設開啟(edgeOn 圖示)，按下後切換成關閉(edgeOff 圖示) -->
+    <button id="edge-btn" style="display:none;">
+      <img id="edge-btn-icon" src="./WebAR_icon_edgeOn.png" alt="邊緣線開關" />
+    </button>
 
     <!-- 操作說明按鈕：Preview 模式顯示相機操作說明，AR 模式顯示模型狀態/疑難排解說明(內容不同) -->
     <button id="info-btn" style="display:none;">
@@ -266,6 +283,8 @@
     const infoCloseBtn = document.getElementById('info-close-btn');
     const infoContentPreview = document.getElementById('info-content-preview');
     const infoContentAr = document.getElementById('info-content-ar');
+    const edgeBtn = document.getElementById('edge-btn');
+    const edgeBtnIcon = document.getElementById('edge-btn-icon');
     lightAngleSlider.addEventListener('input', () => {
       lightAngleDeg = Number(lightAngleSlider.value);
       lightAngleValue.textContent = lightAngleDeg;
@@ -296,9 +315,10 @@
       btn.addEventListener('pointercancel', release);
     }
     document.querySelectorAll('#controls button').forEach(addPressEffect);
-    // info-btn/info-close-btn 不在 #controls 底下，另外手動註冊按壓效果
+    // info-btn/info-close-btn/edge-btn 不在 #controls 底下，另外手動註冊按壓效果
     addPressEffect(infoBtn);
     addPressEffect(infoCloseBtn);
+    addPressEffect(edgeBtn);
 
     infoBtn.addEventListener('click', () => {
       infoPanel.style.display = 'block';
@@ -306,11 +326,17 @@
     infoCloseBtn.addEventListener('click', () => {
       infoPanel.style.display = 'none';
     });
+    edgeBtn.addEventListener('click', () => {
+      setEdgesVisible(!edgesVisible);
+    });
 
     // 依目前模式(AR/Preview)切換操作說明按鈕要顯示的內容，兩種模式的操作方式完全不同，
     // 所以說明文字也不一樣：Preview 是滑鼠鍵盤相機操作說明，AR 是模型狀態/疑難排解說明
+    // 邊緣線開關按鈕跟操作說明按鈕的顯示時機相同(AR/Preview 都顯示，Session 結束就一起隱藏)，
+    // 所以一併在這裡顯示，不需要另外寫一套邏輯
     function showInfoButtonFor(mode) {
       infoBtn.style.display = 'block';
+      edgeBtn.style.display = 'block';
       infoContentPreview.style.display = (mode === 'preview') ? 'block' : 'none';
       infoContentAr.style.display = (mode === 'ar') ? 'block' : 'none';
     }
@@ -576,12 +602,14 @@
     }
 
     // ---------------------------------------------------------------
-    // 邊緣線顯示：模擬 Rhino「彩現 + 顯示邊緣」模式，統一黑色線
+    // 邊緣線顯示：模擬 Rhino「彩現 + 顯示邊緣」模式，統一灰色線
     // 用 Three.js 內建的 EdgesGeometry 在執行期即時計算，不需要修改模型檔案本身
+    // 顯示/隱藏可透過畫面右上角的邊緣線開關按鈕即時切換(見 setEdgesVisible)
     // ---------------------------------------------------------------
-    const SHOW_EDGES = true;
-    const EDGE_COLOR = 0x000000;
-    const EDGE_ANGLE_THRESHOLD = 30; // 相鄰面法線夾角超過幾度才畫線，數字越小線越多、越細碎
+    let edgesVisible = true; // 目前是否顯示邊緣線，預設開啟；按下邊緣線開關按鈕會即時切換這個值
+    const EDGE_COLOR = 0xb2b2b2;
+    const EDGE_ANGLE_THRESHOLD = 10; // 相鄰面法線夾角超過幾度才畫線，數字越小線越多、越細碎
+    const edgeLineObjects = []; // 累積所有模型建立出來的邊緣線物件，供 setEdgesVisible() 統一切換顯示/隱藏
 
     function addEdgeOutlines(root) {
       const edgeMaterial = new THREE.LineBasicMaterial({ color: EDGE_COLOR });
@@ -589,10 +617,20 @@
         if (node.isMesh && node.geometry) {
           const edgesGeo = new THREE.EdgesGeometry(node.geometry, EDGE_ANGLE_THRESHOLD);
           const edgeLines = new THREE.LineSegments(edgesGeo, edgeMaterial);
+          edgeLines.visible = edgesVisible; // 套用目前的開關狀態，讓稍後才載入完成的模型也能跟上按鈕當下的狀態
           // 掛在 mesh 底下當子物件，這樣模型之後的 scale/position/rotation 調整會一併帶著邊緣線走
           node.add(edgeLines);
+          edgeLineObjects.push(edgeLines);
         }
       });
+    }
+
+    // 邊緣線開關按鈕：切換所有已建立的邊緣線物件(含目前作用中與背景已載入的模型)顯示/隱藏，
+    // 同時切換按鈕圖示(edgeOn/edgeOff.png)，讓畫面立即反映目前狀態
+    function setEdgesVisible(visible) {
+      edgesVisible = visible;
+      edgeLineObjects.forEach((line) => { line.visible = visible; });
+      edgeBtnIcon.src = visible ? './WebAR_icon_edgeOn.png' : './WebAR_icon_edgeOff.png';
     }
 
     // ---------------------------------------------------------------
@@ -632,9 +670,9 @@
           if (FORCE_DOUBLE_SIDED) {
             forceDoubleSidedMaterials(root);
           }
-          if (SHOW_EDGES) {
-            addEdgeOutlines(root);
-          }
+          // 一律建立邊緣線物件(初始依 edgesVisible 決定顯示/隱藏)，
+          // 這樣邊緣線開關按鈕之後才能直接切換 .visible，不需要重新載入模型
+          addEdgeOutlines(root);
           enableShadowsOnModel(root);
           scene.add(root);
 
@@ -796,6 +834,7 @@
       lightRow.style.display = 'none';
       infoBtn.style.display = 'none';
       infoPanel.style.display = 'none';
+      edgeBtn.style.display = 'none';
       renderer.setAnimationLoop(null);
     }
 
