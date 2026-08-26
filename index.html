@@ -32,8 +32,8 @@
       transition: background 0.08s ease, transform 0.08s ease, filter 0.08s ease;
     }
     button:disabled { background: #555; }
-    #adjust-row, #adjust-row2, #floor-row { display: flex; gap: 8px; }
-    #adjust-row button, #adjust-row2 button, #floor-row button { padding: 8px 14px; font-size: 14px; background: #444; }
+    #adjust-row, #floor-row { display: flex; gap: 8px; }
+    #adjust-row button, #floor-row button { padding: 8px 14px; font-size: 14px; background: #444; }
 
     /* 模型切換按鈕：預設(未選中)灰底、白色外框、白色字，目前作用中的模型改紫底 */
     #model-row { display: flex; gap: 12px; }
@@ -71,7 +71,7 @@
     }
 
     /* 按下時的視覺回饋：灰色按鈕轉藍色、主按鈕變暗，並縮小一點模擬按壓感 */
-    #adjust-row button.pressed, #adjust-row2 button.pressed, #floor-row button.pressed {
+    #adjust-row button.pressed, #floor-row button.pressed {
       background: #2979ff;
       transform: scale(0.94);
     }
@@ -158,10 +158,8 @@
         <button id="rot-plus">+5°</button>
       </div>
       <div id="floor-row" style="display:none;">
-        <button id="floor-up">上一層 ▲</button>
-        <button id="floor-down">下一層 ▼</button>
-      </div>
-      <div id="adjust-row2" style="display:none;">
+        <button id="floor-up">往上一層 ▲</button>
+        <button id="floor-down">往下一層 ▼</button>
         <button id="place-here-btn">重新放置</button>
       </div>
       <button id="start-btn">開始 AR 體驗</button>
@@ -270,7 +268,6 @@
     const statusEl = document.getElementById('status-line');
     const startBtn = document.getElementById('start-btn');
     const adjustRow = document.getElementById('adjust-row');
-    const adjustRow2 = document.getElementById('adjust-row2');
     const floorRow = document.getElementById('floor-row');
     const lightRow = document.getElementById('light-row');
     const lightAngleSlider = document.getElementById('light-angle-slider');
@@ -805,7 +802,6 @@
         startBtn.style.display = 'none';
         adjustRow.style.display = 'flex';
         floorRow.style.display = 'flex';
-        adjustRow2.style.display = 'flex';
         lightRow.style.display = 'flex';
         showInfoButtonFor('ar'); // AR 模式也顯示說明按鈕，內容改成模型狀態/疑難排解說明
 
@@ -830,7 +826,6 @@
       startBtn.textContent = '開始 AR 體驗';
       adjustRow.style.display = 'none';
       floorRow.style.display = 'none';
-      adjustRow2.style.display = 'none';
       lightRow.style.display = 'none';
       infoBtn.style.display = 'none';
       infoPanel.style.display = 'none';
@@ -961,12 +956,10 @@
       applyLightingProfile('preview');
       startBtn.style.display = 'none';
       lightRow.style.display = 'flex';    // 光線角度滑桿在預覽模式也能用，方便檢查光照效果
-      // Height/旋轉/樓層按鈕是給 AR 現場放置模型用的，預覽模式沒有實際放置流程，
+      // Height/旋轉/樓層/重新放置按鈕是給 AR 現場放置模型用的，預覽模式沒有實際放置流程，
       // 用滑鼠 WASD+QE 就能自由檢視模型任何角度/樓層，這些按鈕留著沒有意義，改為隱藏
       adjustRow.style.display = 'none';
       floorRow.style.display = 'none';
-      // 「重新放置」按鈕是給 AR 現場用 hit-test 手動重新放置模型的，預覽模式沒有實際放置流程，維持隱藏
-      adjustRow2.style.display = 'none';
       showInfoButtonFor('preview'); // 操作說明按鈕在 Preview/AR 都會顯示，但內容不同；這裡切換成相機操作說明
 
       scene.background = new THREE.Color(0xdddddd); // 給一個中性背景色方便看清楚模型輪廓與邊緣線
