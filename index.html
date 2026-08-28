@@ -115,10 +115,12 @@
     #info-btn img { width: 100%; height: 100%; display: block; }
     #info-btn.pressed { transform: scale(0.9); filter: brightness(0.85); }
 
-    /* 操作說明視窗：白底半透明，置中顯示，右上角有關閉按鈕 */
+    /* 操作說明視窗：白底半透明，置中顯示，右上角有關閉按鈕；
+       max-height + overflow-y 是因為加了模型/按鈕說明後內容變長，避免在小螢幕手機上超出畫面 */
     #info-panel {
       position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-      width: 88%; max-width: 380px; box-sizing: border-box;
+      width: 88%; max-width: 380px; max-height: 80vh; overflow-y: auto;
+      box-sizing: border-box;
       background: rgba(255, 255, 255, 0.94); color: #222;
       border-radius: 14px; padding: 22px 20px 18px 20px;
       pointer-events: auto; z-index: 20;
@@ -126,8 +128,8 @@
       box-shadow: 0 8px 24px rgba(0,0,0,0.35);
     }
     #info-panel h3 { margin: 0 0 14px 0; font-size: 16px; color: #333; }
-    #info-list { font-size: 14px; line-height: 1.9; }
-    #info-list .info-key {
+    #info-list, #info-list-shared { font-size: 14px; line-height: 1.9; }
+    .info-key {
       display: inline-block; min-width: 150px;
       font-weight: bold; color: #6a1b9a;
       text-align: right; padding-right: 10px; box-sizing: border-box;
@@ -145,6 +147,14 @@
     #info-content-ar ol { margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.7; }
     #info-content-ar li { margin-bottom: 6px; }
     #info-content-ar strong { color: #6a1b9a; }
+
+    /* 模型與按鈕說明：AR/Preview 兩種模式都會顯示，跟模式無關，所以獨立於上面兩個區塊之外，
+       用一條分隔線跟前面的操作說明區隔開來 */
+    #info-content-shared {
+      margin-top: 16px; padding-top: 14px;
+      border-top: 1px solid rgba(0, 0, 0, 0.12);
+    }
+    #info-content-shared .info-key { min-width: 96px; }
 
     #status-line { white-space: pre-line; }
   </style>
@@ -223,6 +233,18 @@
           <li>點擊<strong>「重新放置」</strong>，將模型直接放置在你的正前方。</li>
           <li>若以上方法皆無效，請重新整理頁面或檢查網路連線。</li>
         </ol>
+      </div>
+
+      <!-- 模型與按鈕說明：AR/Preview 都會顯示，跟目前是哪個模式無關，所以不受 showInfoButtonFor() 的顯示切換控制 -->
+      <div id="info-content-shared">
+        <h3>模型與按鈕說明</h3>
+        <div id="info-list-shared">
+          <div><span class="info-key">按鈕 1：</span>原始模型</div>
+          <div><span class="info-key">按鈕 2：</span>管線模型，牆面半透明可查看管線配置</div>
+          <div><span class="info-key">按鈕 3：</span>材質替換模型，展示即時切換建材效果</div>
+          <div><span class="info-key">家具按鈕：</span>切換家具是否顯示</div>
+          <div><span class="info-key">邊緣按鈕：</span>切換模型邊緣線是否顯示</div>
+        </div>
       </div>
     </div>
   </div>
@@ -423,10 +445,13 @@
     scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
     pmremGenerator.dispose();
 
-    // 環境光(Hemisphere)：sky/ground 改用有明顯色差的一組顏色(冷灰藍 vs 暖深灰)，
-    // 取代原本幾乎同色的白/淺灰。即使是完全沒被主光/補光照到的面，也會因為法線朝上或朝下
-    // 取樣到不同的環境色而產生微妙深淺變化，不會讓整個空間看起來像被同一層死板的補光蓋住。
-    const hemiLight = new THREE.HemisphereLight(0xb0c4de, 0x4a4038, 1.0);
+    // 環境光(Hemisphere)：sky/ground 用有色差的一組顏色(冷灰藍 vs 暖灰)取代原本幾乎同色的白/淺灰，
+    // 讓沒被主光照到的面也能因法線朝上/朝下而產生微妙深淺變化。
+    // 注意：ground 顏色會直接決定「法線朝下」的表面(室內天花板、屋簷/雨遮底面等)拿到的環境光顏色與亮度，
+    // 先前把 ground 設得太暗(0x4a4038，亮度只有約 25%)，室內天花板這類完全朝下、又照不到主光的面
+    // 幾乎只能拿到這個過暗的顏色，疊加 ACES tone mapping 的壓縮效果，就整片變成死黑——這是這次天花板過黑的主因。
+    // 這裡把 ground 提亮到跟 sky 亮度接近的暖灰色，保留一點冷暖對比，但不會再讓朝下的面過暗。
+    const hemiLight = new THREE.HemisphereLight(0xb0c4de, 0xfff9f2, 1.0);
     scene.add(hemiLight);
 
     // 主光(Key Light)：角度可用畫面下方的滑桿(或 +5°/-5° 按鈕)即時旋轉調整
@@ -435,15 +460,6 @@
     const mainLight = new THREE.DirectionalLight(0xffffff, 1.0);
     scene.add(mainLight);
     scene.add(mainLight.target); // DirectionalLight 的 target 必須加入場景，調整 target.position 才會生效
-
-    // 補光(Fill Light)：簡易三點打光的第二盞燈，永遠位在主光正對面(角度+180°)、仰角較低，
-    // 強度只有主光的一小部分，且不投影陰影(castShadow 保持預設 false)。
-    // 作用是把主光照不到的陰影面稍微「填」出一點層次，避免完全死黑，
-    // 同時因為強度夠弱，不會蓋掉主光原本的方向感。
-    const FILL_LIGHT_RATIO = 0.0; // 補光強度 = 主光強度 × 這個比例，兩種模式(AR/Preview)共用同一個比例
-    const fillLight = new THREE.DirectionalLight(0xffffff, 1.0 * FILL_LIGHT_RATIO);
-    scene.add(fillLight);
-    scene.add(fillLight.target);
 
     // ---------------------------------------------------------------
     // 雙模式光照設定：
@@ -473,7 +489,6 @@
       const profile = LIGHTING_PROFILES[profileName];
       mainLight.intensity = profile.mainIntensity;
       mainLight.castShadow = profile.shadows;
-      fillLight.intensity = profile.mainIntensity * FILL_LIGHT_RATIO; // 補光強度跟著主光同步縮放，維持同一個比例
       renderer.shadowMap.enabled = profile.shadows;
       // PCFSoftShadowMap 本身就會套用柔化過的邊緣濾波，是目前預設、相容性/效能最穩妥的選項。
       // 如果實測後還想要更明顯的模糊柔邊，可以把下面 USE_VSM_SHADOWS 打開試試看，
@@ -619,23 +634,14 @@
       const dx = Math.sin(rad) * MAIN_LIGHT_DISTANCE;
       const dz = Math.cos(rad) * MAIN_LIGHT_DISTANCE;
 
-      // 補光永遠位在主光正對面(角度 +180°)、仰角較低(0.4 倍距離高度，比主光的 0.8 倍更貼近水平)，
-      // 這樣補光才會像是從主光的背面柔和地把陰影面「填」起來，而不是又形成第二道明顯的方向光
-      const fillRad = rad + Math.PI;
-      const fdx = Math.sin(fillRad) * MAIN_LIGHT_DISTANCE;
-      const fdz = Math.cos(fillRad) * MAIN_LIGHT_DISTANCE;
-
       if (model) {
         const center = getModelWorldCenter();
         const base = getModelWorldBase();
         mainLight.position.set(center.x + dx, center.y + MAIN_LIGHT_DISTANCE * 0.8, center.z + dz);
         mainLight.target.position.copy(center);
-        fillLight.position.set(center.x + fdx, center.y + MAIN_LIGHT_DISTANCE * 0.4, center.z + fdz);
-        fillLight.target.position.copy(center);
         previewGround.position.set(base.x, base.y - 0.01, base.z);
       } else {
         mainLight.position.set(dx, MAIN_LIGHT_DISTANCE * 0.8, dz);
-        fillLight.position.set(fdx, MAIN_LIGHT_DISTANCE * 0.4, fdz);
       }
     }
     applyLightingProfile('ar'); // 預設先套用 AR 模式的均勻光照，避免尚未進入任何模式前就啟用陰影運算
