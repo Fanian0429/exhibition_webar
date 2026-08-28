@@ -80,10 +80,21 @@
       transform: scale(0.96);
     }
 
-    /* 邊緣線開關按鈕：位於操作說明按鈕左側，尺寸/樣式完全比照 #info-btn，
-       按下時套用同一套「變灰」按壓回饋(.pressed)，與其他控制按鈕的手感一致 */
-    #edge-btn {
+    /* 家具模型開關按鈕：位於邊緣線開關按鈕原本的位置(右側第二顆)，尺寸/樣式完全比照 #info-btn */
+    #furni-btn {
       position: fixed; right: 68px; top: 24px;
+      width: 44px; height: 44px; padding: 0;
+      border: none; border-radius: 50%; background: transparent;
+      pointer-events: auto; z-index: 15;
+      transition: transform 0.08s ease, filter 0.08s ease;
+    }
+    #furni-btn img { width: 100%; height: 100%; display: block; }
+    #furni-btn.pressed { transform: scale(0.9); filter: brightness(0.85); }
+
+    /* 邊緣線開關按鈕：因為新增了家具開關按鈕，往左讓出一個按鈕的距離(右側第三顆)，
+       尺寸/樣式完全比照 #info-btn，按下時套用同一套「變灰」按壓回饋(.pressed)，與其他控制按鈕的手感一致 */
+    #edge-btn {
+      position: fixed; right: 120px; top: 24px;
       width: 44px; height: 44px; padding: 0;
       border: none; border-radius: 50%; background: transparent;
       pointer-events: auto; z-index: 15;
@@ -169,6 +180,11 @@
       </div>
     </div>
 
+    <!-- 家具模型開關按鈕：控制 townhouse_furniture.glb 顯示/隱藏，預設開啟(furniOn 圖示)，按下後切換成關閉(furniOff 圖示) -->
+    <button id="furni-btn" style="display:none;">
+      <img id="furni-btn-icon" src="./WebAR_icon_furniOn.png" alt="家具開關" />
+    </button>
+
     <!-- 邊緣線開關按鈕：控制邊緣線顯示/隱藏，預設開啟(edgeOn 圖示)，按下後切換成關閉(edgeOff 圖示) -->
     <button id="edge-btn" style="display:none;">
       <img id="edge-btn-icon" src="./WebAR_icon_edgeOn.png" alt="邊緣線開關" />
@@ -223,6 +239,7 @@
     import * as THREE from 'three';
     import { GLTFLoader } from 'https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js';
     import { OrbitControls } from 'https://unpkg.com/three@0.158.0/examples/jsm/controls/OrbitControls.js';
+    import { RoomEnvironment } from 'https://unpkg.com/three@0.158.0/examples/jsm/environments/RoomEnvironment.js';
 
     // ---------------------------------------------------------------
     // 專案設定：模型資訊
@@ -232,6 +249,7 @@
     const MODEL_URL = './townhouse.glb';
     const MODEL_URL2 = './townhouse_mep.glb';
     const MODEL_URL3 = './townhouse_mat.glb';
+    const FURNITURE_MODEL_URL = './townhouse_furniture.glb'; // 家具模型：疊加在目前作用中的模型上，不參與 1/2/3 模型切換
     const MODEL_SCALE = 1; // 若模型單位是公尺，先從 1 開始測試，依實際狀況調整
 
     // 可切換模型清單：key 對應按鈕與 models{} 的存放位置，url/label 用於載入與訊息顯示
@@ -248,6 +266,8 @@
     let modelPlaced = false;
     let activeModelKey = 'townhouse'; // 預設啟用 townhouse，對應按鈕「1」
     const models = {}; // key -> { object3D, fitData }，三個模型都會各自載入並常駐在場景中，用 visible 切換
+    let furnitureModel = null;     // 家具模型物件，跟目前作用中的模型共用同一個座標系，每一幀同步 position/rotation/scale
+    let furnitureVisible = true;   // 家具按鈕的開關狀態，預設開啟
 
     let xrSession = null;
     let hitTestSource = null;
@@ -282,6 +302,8 @@
     const infoContentAr = document.getElementById('info-content-ar');
     const edgeBtn = document.getElementById('edge-btn');
     const edgeBtnIcon = document.getElementById('edge-btn-icon');
+    const furniBtn = document.getElementById('furni-btn');
+    const furniBtnIcon = document.getElementById('furni-btn-icon');
     lightAngleSlider.addEventListener('input', () => {
       lightAngleDeg = Number(lightAngleSlider.value);
       lightAngleValue.textContent = lightAngleDeg;
@@ -312,10 +334,11 @@
       btn.addEventListener('pointercancel', release);
     }
     document.querySelectorAll('#controls button').forEach(addPressEffect);
-    // info-btn/info-close-btn/edge-btn 不在 #controls 底下，另外手動註冊按壓效果
+    // info-btn/info-close-btn/edge-btn/furni-btn 不在 #controls 底下，另外手動註冊按壓效果
     addPressEffect(infoBtn);
     addPressEffect(infoCloseBtn);
     addPressEffect(edgeBtn);
+    addPressEffect(furniBtn);
 
     infoBtn.addEventListener('click', () => {
       infoPanel.style.display = 'block';
@@ -326,14 +349,18 @@
     edgeBtn.addEventListener('click', () => {
       setEdgesVisible(!edgesVisible);
     });
+    furniBtn.addEventListener('click', () => {
+      setFurnitureVisible(!furnitureVisible);
+    });
 
     // 依目前模式(AR/Preview)切換操作說明按鈕要顯示的內容，兩種模式的操作方式完全不同，
     // 所以說明文字也不一樣：Preview 是滑鼠鍵盤相機操作說明，AR 是模型狀態/疑難排解說明
-    // 邊緣線開關按鈕跟操作說明按鈕的顯示時機相同(AR/Preview 都顯示，Session 結束就一起隱藏)，
+    // 邊緣線開關/家具開關按鈕跟操作說明按鈕的顯示時機相同(AR/Preview 都顯示，Session 結束就一起隱藏)，
     // 所以一併在這裡顯示，不需要另外寫一套邏輯
     function showInfoButtonFor(mode) {
       infoBtn.style.display = 'block';
       edgeBtn.style.display = 'block';
+      furniBtn.style.display = 'block';
       infoContentPreview.style.display = (mode === 'preview') ? 'block' : 'none';
       infoContentAr.style.display = (mode === 'ar') ? 'block' : 'none';
     }
@@ -380,21 +407,43 @@
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.xr.enabled = true;
+    // ACES Filmic Tone Mapping：讓亮暗部的過渡更接近相機/電影的自然壓縮曲線，
+    // 材質的深淺變化會比 NoToneMapping(線性輸出、容易死板)明顯許多。
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.4; // 如果實測整體偏暗/偏亮，優先調整這個值，不要動光源強度
     document.body.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 1000);
 
-    // 環境光(Hemisphere)，均勻沒有方向性陰影，作為基礎照明
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xcccccc, 1.0);
+    // 環境貼圖(Environment Map)：PBR 材質(GLTF 預設匯出的 MeshStandardMaterial)在沒有 envMap 時，
+    // 反射/高光會非常平，這通常是「模型看起來很扁」最主要的原因之一，比單純加燈更有感。
+    // RoomEnvironment 是 three.js 內建的中性室內光環境，不需要額外準備 HDRI 檔案，對手機效能負擔也很小。
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmremGenerator.dispose();
+
+    // 環境光(Hemisphere)：sky/ground 改用有明顯色差的一組顏色(冷灰藍 vs 暖深灰)，
+    // 取代原本幾乎同色的白/淺灰。即使是完全沒被主光/補光照到的面，也會因為法線朝上或朝下
+    // 取樣到不同的環境色而產生微妙深淺變化，不會讓整個空間看起來像被同一層死板的補光蓋住。
+    const hemiLight = new THREE.HemisphereLight(0xb0c4de, 0x4a4038, 1.0);
     scene.add(hemiLight);
 
-    // 單一方向光，角度可用畫面下方的滑桿(或 +5°/-5° 按鈕)即時旋轉調整
+    // 主光(Key Light)：角度可用畫面下方的滑桿(或 +5°/-5° 按鈕)即時旋轉調整
     // 這個距離會在模型載入完成後，依實際包圍球大小重新計算(見 computeFitData/applyFitData)，這裡只是模型載入前的暫時預設值
     let MAIN_LIGHT_DISTANCE = 5;
     const mainLight = new THREE.DirectionalLight(0xffffff, 1.0);
     scene.add(mainLight);
     scene.add(mainLight.target); // DirectionalLight 的 target 必須加入場景，調整 target.position 才會生效
+
+    // 補光(Fill Light)：簡易三點打光的第二盞燈，永遠位在主光正對面(角度+180°)、仰角較低，
+    // 強度只有主光的一小部分，且不投影陰影(castShadow 保持預設 false)。
+    // 作用是把主光照不到的陰影面稍微「填」出一點層次，避免完全死黑，
+    // 同時因為強度夠弱，不會蓋掉主光原本的方向感。
+    const FILL_LIGHT_RATIO = 0.0; // 補光強度 = 主光強度 × 這個比例，兩種模式(AR/Preview)共用同一個比例
+    const fillLight = new THREE.DirectionalLight(0xffffff, 1.0 * FILL_LIGHT_RATIO);
+    scene.add(fillLight);
+    scene.add(fillLight.target);
 
     // ---------------------------------------------------------------
     // 雙模式光照設定：
@@ -424,6 +473,7 @@
       const profile = LIGHTING_PROFILES[profileName];
       mainLight.intensity = profile.mainIntensity;
       mainLight.castShadow = profile.shadows;
+      fillLight.intensity = profile.mainIntensity * FILL_LIGHT_RATIO; // 補光強度跟著主光同步縮放，維持同一個比例
       renderer.shadowMap.enabled = profile.shadows;
       // PCFSoftShadowMap 本身就會套用柔化過的邊緣濾波，是目前預設、相容性/效能最穩妥的選項。
       // 如果實測後還想要更明顯的模糊柔邊，可以把下面 USE_VSM_SHADOWS 打開試試看，
@@ -568,14 +618,24 @@
       const rad = toRad(lightAngleDeg);
       const dx = Math.sin(rad) * MAIN_LIGHT_DISTANCE;
       const dz = Math.cos(rad) * MAIN_LIGHT_DISTANCE;
+
+      // 補光永遠位在主光正對面(角度 +180°)、仰角較低(0.4 倍距離高度，比主光的 0.8 倍更貼近水平)，
+      // 這樣補光才會像是從主光的背面柔和地把陰影面「填」起來，而不是又形成第二道明顯的方向光
+      const fillRad = rad + Math.PI;
+      const fdx = Math.sin(fillRad) * MAIN_LIGHT_DISTANCE;
+      const fdz = Math.cos(fillRad) * MAIN_LIGHT_DISTANCE;
+
       if (model) {
         const center = getModelWorldCenter();
         const base = getModelWorldBase();
         mainLight.position.set(center.x + dx, center.y + MAIN_LIGHT_DISTANCE * 0.8, center.z + dz);
         mainLight.target.position.copy(center);
+        fillLight.position.set(center.x + fdx, center.y + MAIN_LIGHT_DISTANCE * 0.4, center.z + fdz);
+        fillLight.target.position.copy(center);
         previewGround.position.set(base.x, base.y - 0.01, base.z);
       } else {
         mainLight.position.set(dx, MAIN_LIGHT_DISTANCE * 0.8, dz);
+        fillLight.position.set(fdx, MAIN_LIGHT_DISTANCE * 0.4, fdz);
       }
     }
     applyLightingProfile('ar'); // 預設先套用 AR 模式的均勻光照，避免尚未進入任何模式前就啟用陰影運算
@@ -745,6 +805,62 @@
     loadModel('townhouse_mep');
     loadModel('townhouse_mat');
 
+    // ---------------------------------------------------------------
+    // 家具模型：與目前作用中的模型共用同一個建物座標系，不參與 1/2/3 模型切換，
+    // 而是每一幀跟著目前作用中的模型同步 position/rotation/scale(見 syncFurnitureModel)，
+    // 單純用畫面右上角的家具開關按鈕獨立控制顯示/隱藏。
+    // ---------------------------------------------------------------
+    function loadFurnitureModel() {
+      loader.load(
+        FURNITURE_MODEL_URL,
+        (gltf) => {
+          const root = gltf.scene;
+          root.scale.set(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
+          root.visible = false; // 實際顯示狀態交給 syncFurnitureModel() 每幀統一決定
+          if (USE_FLAT_SHADING_FALLBACK) {
+            applyFlatShadingFallback(root);
+          }
+          if (FORCE_DOUBLE_SIDED) {
+            forceDoubleSidedMaterials(root);
+          }
+          addEdgeOutlines(root); // 家具也套用邊緣線開關，跟建物模型的視覺風格一致
+          enableShadowsOnModel(root);
+          scene.add(root);
+
+          furnitureModel = root;
+          updateStatus('townhouse_furniture.glb 已載入完成。');
+        },
+        undefined,
+        (err) => {
+          console.error('GLTF load error', err);
+          updateStatus('載入 townhouse_furniture.glb 失敗，請確認檔案路徑是否正確。');
+        }
+      );
+    }
+
+    // 每一幀呼叫：把家具模型的座標對齊到目前作用中的模型上(不論該模型是否剛切換、剛被重新放置、
+    // 或使用者用高度/旋轉/樓層按鈕調整過)，並依「家具開關狀態」與「目前模型是否可見」決定最終顯示與否。
+    function syncFurnitureModel() {
+      if (!furnitureModel) return;
+      if (model) {
+        furnitureModel.position.copy(model.position);
+        furnitureModel.rotation.copy(model.rotation);
+        furnitureModel.scale.copy(model.scale);
+        furnitureModel.visible = furnitureVisible && model.visible;
+      } else {
+        furnitureModel.visible = false;
+      }
+    }
+
+    // 家具開關按鈕：切換 furnitureVisible 狀態、立即同步一次畫面，並切換按鈕圖示(furniOn/furniOff.png)
+    function setFurnitureVisible(visible) {
+      furnitureVisible = visible;
+      furniBtnIcon.src = visible ? './WebAR_icon_furniOn.png' : './WebAR_icon_furniOff.png';
+      syncFurnitureModel();
+    }
+
+    loadFurnitureModel();
+
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
@@ -821,6 +937,7 @@
       modelPlaced = false;
       planeEverDetected = false;
       if (model) model.visible = false;
+      if (furnitureModel) furnitureModel.visible = false;
       startBtn.style.display = 'block';
       startBtn.disabled = false;
       startBtn.textContent = '開始 AR 體驗';
@@ -830,6 +947,7 @@
       infoBtn.style.display = 'none';
       infoPanel.style.display = 'none';
       edgeBtn.style.display = 'none';
+      furniBtn.style.display = 'none';
       renderer.setAnimationLoop(null);
     }
 
@@ -990,6 +1108,7 @@
         updateFlyMovement();
         previewControls.update();
         updateMainLightPosition();
+        syncFurnitureModel();
         renderer.render(scene, camera);
       });
     }
@@ -1031,7 +1150,7 @@
 
           if (!modelPlaced) {
             planeEverDetected = true;
-            placeModelAtHitPosition('已偵測到平面，模型已放置於你的正前方 — 之後的穩定性完全依賴裝置的 SLAM 追蹤。');
+            placeModelAtHitPosition('已偵測到平面，模型已放置於你的正前方。');
           }
         } else if (!modelPlaced) {
           updateStatus('請將手機對準地板/桌面掃描以偵測平面...');
@@ -1039,6 +1158,7 @@
       }
 
       updateMainLightPosition();
+      syncFurnitureModel();
       renderer.render(scene, camera);
     }
 
