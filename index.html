@@ -156,6 +156,29 @@
     }
     #info-content-shared .info-key { min-width: 96px; }
 
+    /* 物件選取資訊面板：點擊/雙擊模型後顯示材質名稱(與未來擴充的額外資訊)，樣式比照 #info-panel */
+    #object-info-panel {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 84%; max-width: 340px; max-height: 70vh; overflow-y: auto;
+      box-sizing: border-box;
+      background: rgba(255, 255, 255, 0.96); color: #222;
+      border-radius: 14px; padding: 20px 20px 16px 20px;
+      pointer-events: auto; z-index: 25; /* 比 #info-panel(z-index 20) 更上層，避免兩個面板同時開啟時互相蓋住 */
+      font-family: -apple-system, "Noto Sans TC", sans-serif;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
+    #object-info-panel h3 { margin: 0 0 12px 0; font-size: 16px; color: #333; }
+    #object-info-list { font-size: 14px; line-height: 1.9; }
+    #object-info-list .info-key { min-width: 84px; }
+    #object-info-close-btn {
+      position: absolute; top: 10px; right: 10px;
+      width: 28px; height: 28px; padding: 0;
+      border: none; border-radius: 50%;
+      background: #e0e0e0; color: #333;
+      font-size: 16px; font-weight: bold; line-height: 1;
+    }
+    #object-info-close-btn.pressed { transform: scale(0.9); filter: brightness(0.9); }
+
     #status-line { white-space: pre-line; }
   </style>
 </head>
@@ -247,6 +270,13 @@
         </div>
       </div>
     </div>
+
+    <!-- 物件選取資訊面板：點擊模型物件一次會選取並變紅色調，在同一個物件上再點一次(雙擊)會開啟這個面板顯示材質名稱 -->
+    <div id="object-info-panel" style="display:none;">
+      <button id="object-info-close-btn">&times;</button>
+      <h3>物件資訊</h3>
+      <div id="object-info-list"></div>
+    </div>
   </div>
 
   <script type="importmap">
@@ -272,6 +302,7 @@
     const MODEL_URL2 = './townhouse_mep.glb';
     const MODEL_URL3 = './townhouse_mat.glb';
     const FURNITURE_MODEL_URL = './townhouse_furniture.glb'; // 家具模型：疊加在目前作用中的模型上，不參與 1/2/3 模型切換
+    const PIPE_MODEL_URL = './townhouse_pipe.glb'; // 管線模型：從 townhouse_mep.glb 獨立出來，只跟著按鈕 2(townhouse_mep)開關
     const MODEL_SCALE = 1; // 若模型單位是公尺，先從 1 開始測試，依實際狀況調整
 
     // 可切換模型清單：key 對應按鈕與 models{} 的存放位置，url/label 用於載入與訊息顯示
@@ -290,6 +321,7 @@
     const models = {}; // key -> { object3D, fitData }，三個模型都會各自載入並常駐在場景中，用 visible 切換
     let furnitureModel = null;     // 家具模型物件，跟目前作用中的模型共用同一個座標系，每一幀同步 position/rotation/scale
     let furnitureVisible = true;   // 家具按鈕的開關狀態，預設開啟
+    let pipeModel = null;          // 管線模型物件，只跟著 townhouse_mep(按鈕 2) 的顯示狀態同步開關，不跟其他模型連動
 
     let xrSession = null;
     let hitTestSource = null;
@@ -326,6 +358,9 @@
     const edgeBtnIcon = document.getElementById('edge-btn-icon');
     const furniBtn = document.getElementById('furni-btn');
     const furniBtnIcon = document.getElementById('furni-btn-icon');
+    const objectInfoPanel = document.getElementById('object-info-panel');
+    const objectInfoCloseBtn = document.getElementById('object-info-close-btn');
+    const objectInfoList = document.getElementById('object-info-list');
     lightAngleSlider.addEventListener('input', () => {
       lightAngleDeg = Number(lightAngleSlider.value);
       lightAngleValue.textContent = lightAngleDeg;
@@ -356,11 +391,12 @@
       btn.addEventListener('pointercancel', release);
     }
     document.querySelectorAll('#controls button').forEach(addPressEffect);
-    // info-btn/info-close-btn/edge-btn/furni-btn 不在 #controls 底下，另外手動註冊按壓效果
+    // info-btn/info-close-btn/edge-btn/furni-btn/object-info-close-btn 不在 #controls 底下，另外手動註冊按壓效果
     addPressEffect(infoBtn);
     addPressEffect(infoCloseBtn);
     addPressEffect(edgeBtn);
     addPressEffect(furniBtn);
+    addPressEffect(objectInfoCloseBtn);
 
     infoBtn.addEventListener('click', () => {
       infoPanel.style.display = 'block';
@@ -373,6 +409,9 @@
     });
     furniBtn.addEventListener('click', () => {
       setFurnitureVisible(!furnitureVisible);
+    });
+    objectInfoCloseBtn.addEventListener('click', () => {
+      closeObjectInfoPanel();
     });
 
     // 依目前模式(AR/Preview)切換操作說明按鈕要顯示的內容，兩種模式的操作方式完全不同，
@@ -768,6 +807,8 @@
     function switchToModel(key) {
       if (key === activeModelKey) return;
 
+      deselectMesh(); // 換模型前先清掉選取狀態，避免選取殘留在已經隱藏的舊模型物件上
+
       const entry = models[key];
       if (!entry) {
         updateStatus(MODEL_CONFIGS[key].label + ' 仍在載入中，請稍候...');
@@ -859,6 +900,8 @@
     }
 
     // 家具開關按鈕：切換 furnitureVisible 狀態、立即同步一次畫面，並切換按鈕圖示(furniOn/furniOff.png)
+    // 注意：家具已經不參與選取(collectSelectableMeshes 不會收它)，所以這裡不需要再呼叫 deselectMesh()，
+    // 否則使用者選取了牆面之類的物件、又剛好按了家具開關，選取狀態會被無關地清掉
     function setFurnitureVisible(visible) {
       furnitureVisible = visible;
       furniBtnIcon.src = visible ? './WebAR_icon_furniOn.png' : './WebAR_icon_furniOff.png';
@@ -866,6 +909,212 @@
     }
 
     loadFurnitureModel();
+
+    // ---------------------------------------------------------------
+    // 管線模型：從 townhouse_mep.glb 獨立出來的另一個檔案(townhouse_pipe.glb)，
+    // 但邏輯上仍然「屬於」townhouse_mep 這個模型 —— 只有目前作用中的模型是 townhouse_mep(按鈕 2)
+    // 且該模型已顯示時才會一起出現，跟著 townhouse_mep 的座標同步 position/rotation/scale，
+    // 不受 1/3 號模型或家具開關影響，也不需要另外的開關按鈕。
+    // ---------------------------------------------------------------
+    function loadPipeModel() {
+      loader.load(
+        PIPE_MODEL_URL,
+        (gltf) => {
+          const root = gltf.scene;
+          root.scale.set(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
+          root.visible = false; // 實際顯示狀態交給 syncPipeModel() 每幀統一決定
+          if (USE_FLAT_SHADING_FALLBACK) {
+            applyFlatShadingFallback(root);
+          }
+          if (FORCE_DOUBLE_SIDED) {
+            forceDoubleSidedMaterials(root);
+          }
+          addEdgeOutlines(root); // 管線也套用邊緣線開關，跟建物模型的視覺風格一致
+          enableShadowsOnModel(root);
+          scene.add(root);
+
+          pipeModel = root;
+          updateStatus('townhouse_pipe.glb 已載入完成。');
+        },
+        undefined,
+        (err) => {
+          console.error('GLTF load error', err);
+          updateStatus('載入 townhouse_pipe.glb 失敗，請確認檔案路徑是否正確。');
+        }
+      );
+    }
+
+    // 每一幀呼叫：管線模型永遠對齊 townhouse_mep 這個模型物件本身的座標(不是「目前作用中的模型」，
+    // 因為就算 townhouse_mep 不是目前顯示的模型，它的 object3D 依然存在場景裡，只是 visible=false)。
+    // 顯示與否只看「目前作用中的模型是不是 townhouse_mep，而且它本身是可見的」，等於完全跟著按鈕 2 的開關走。
+    function syncPipeModel() {
+      if (!pipeModel) return;
+      const mepEntry = models['townhouse_mep'];
+      if (mepEntry && activeModelKey === 'townhouse_mep' && model && model.visible) {
+        pipeModel.position.copy(mepEntry.object3D.position);
+        pipeModel.rotation.copy(mepEntry.object3D.rotation);
+        pipeModel.scale.copy(mepEntry.object3D.scale);
+        pipeModel.visible = true;
+      } else {
+        pipeModel.visible = false;
+      }
+    }
+
+    loadPipeModel();
+
+    // ---------------------------------------------------------------
+    // 物件選取/互動：AR 點螢幕、Preview 點左鍵，共用同一套判斷邏輯，只有「怎麼取得點擊位置/發射射線」不同。
+    // 流程：點到物件 -> 該物件變紅色調(選取狀態)；在同一個物件上再點一次(短時間內)算「雙擊」-> 開啟資訊面板。
+    // 點到空白處(沒打到任何可選取物件) -> 取消選取。
+    // ---------------------------------------------------------------
+    const raycaster = new THREE.Raycaster();
+    const SELECT_TINT_COLOR = new THREE.Color(0xff0000);
+    const SELECT_TINT_RATIO = 0.3; // 模擬「疊加 30% 透明度紅色遮罩」的視覺效果：材質顏色往紅色內插 30%
+    const DOUBLE_CLICK_MS = 350;   // 兩次點擊間隔在這個時間內、且點的是同一個物件，才算雙擊
+
+    let selectedMesh = null;   // 目前選取中的 mesh(場景中的實際節點，不是材質本身)
+    let lastSelectMesh = null; // 用來判斷雙擊：跟上一次點擊的是不是同一個物件
+    let lastSelectTime = 0;
+
+    // 額外資訊採用程式碼寫死的對照表(不使用 glTF extras)。
+    // Key 建議用 mesh.name(Rhino 匯出時的物件名稱)，之後有新資訊時直接在這個物件裡新增項目即可，
+    // 例如：'Pipe_CopperMain_01': { '使用年限': '15 年', '管徑': '25mm' }
+    const OBJECT_INFO_OVERRIDES = {
+      // 'mesh 或 material 的名稱': { '欄位名稱': '欄位內容', ... }
+    };
+
+    // 收集「目前可以被點擊到」的 mesh 清單：
+    // - 目前作用中的模型：townhouse_mep 特別排除在外(要求「關閉互動」)，其餘模型(townhouse/townhouse_mat)維持可選取
+    // - 家具模型(furnitureModel)刻意不收進來 —— three.js 的 Raycaster 只會對「你傳給它的物件清單」做相交測試，
+    //   不在清單裡的物件就算實際上重疊在射線路徑上，也不會被選到，等於是最直接的「關閉互動」做法
+    // - 管線模型(pipeModel)則相反，要求「可互動」，所以只要它目前是顯示狀態就會加進清單
+    function collectSelectableMeshes() {
+      const meshes = [];
+      if (model && model.visible && activeModelKey !== 'townhouse_mep') {
+        model.traverse((node) => { if (node.isMesh) meshes.push(node); });
+      }
+      if (pipeModel && pipeModel.visible) {
+        pipeModel.traverse((node) => { if (node.isMesh) meshes.push(node); });
+      }
+      return meshes;
+    }
+
+    // 用「已經設定好方向的 raycaster」去對可選取的 mesh 清單做相交測試，回傳最近的那個 mesh(或 null)
+    function performRaycast() {
+      const meshes = collectSelectableMeshes();
+      if (meshes.length === 0) return null;
+      const intersects = raycaster.intersectObjects(meshes, false); // false：清單已經是攤平的 mesh，不用再往子層找
+      return intersects.length > 0 ? intersects[0].object : null;
+    }
+
+    // 把材質換成「往紅色內插 30%」的複製品；用 clone 而不是直接改原始材質的顏色，
+    // 是因為 GLTF 常見多個 mesh 共用同一份材質，直接改顏色會連其他沒被選到的物件一起變色
+    function applySelectionTint(mesh) {
+      if (!mesh.material) return;
+      mesh.userData.originalMaterial = mesh.material; // 保留原始材質參照，取消選取時直接換回來即可
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const tinted = materials.map((mat) => {
+        const cloned = mat.clone();
+        cloned.color.lerp(SELECT_TINT_COLOR, SELECT_TINT_RATIO);
+        return cloned;
+      });
+      mesh.material = Array.isArray(mesh.material) ? tinted : tinted[0];
+    }
+
+    // 換回選取前保留的原始材質參照(不是重新算顏色，避免內插誤差累積)
+    function clearSelectionTint(mesh) {
+      if (!mesh || !mesh.userData.originalMaterial) return;
+      mesh.material = mesh.userData.originalMaterial;
+      delete mesh.userData.originalMaterial;
+    }
+
+    function selectMesh(mesh) {
+      if (selectedMesh === mesh) return;
+      clearSelectionTint(selectedMesh);
+      selectedMesh = mesh;
+      applySelectionTint(mesh);
+    }
+
+    function deselectMesh() {
+      clearSelectionTint(selectedMesh);
+      selectedMesh = null;
+      lastSelectMesh = null;
+      lastSelectTime = 0;
+      closeObjectInfoPanel();
+    }
+
+    // 取得 mesh 的材質名稱：多材質(material 為陣列)時取第一個，沒有命名就顯示預設文字
+    function getMeshMaterialName(mesh) {
+      const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      return (mat && mat.name) ? mat.name : '（未命名材質）';
+    }
+
+    function openObjectInfoPanel(mesh) {
+      const materialName = getMeshMaterialName(mesh);
+      const overrideInfo = OBJECT_INFO_OVERRIDES[mesh.name] || OBJECT_INFO_OVERRIDES[materialName] || null;
+
+      let html = '<div><span class="info-key">材質名稱：</span>' + materialName + '</div>';
+      if (overrideInfo) {
+        for (const fieldLabel in overrideInfo) {
+          html += '<div><span class="info-key">' + fieldLabel + '：</span>' + overrideInfo[fieldLabel] + '</div>';
+        }
+      }
+      objectInfoList.innerHTML = html;
+      objectInfoPanel.style.display = 'block';
+    }
+
+    function closeObjectInfoPanel() {
+      objectInfoPanel.style.display = 'none';
+    }
+
+    // 共用的點擊/點擊分派邏輯：不管是桌面點左鍵還是 AR 點螢幕，最後都會走到這裡，
+    // 差異只在於呼叫這個函式之前，raycaster 是用哪一種方式設定方向(見下面兩處呼叫)
+    function handleSelectionRaycast() {
+      const hit = performRaycast();
+      const now = performance.now();
+
+      if (!hit) {
+        deselectMesh();
+        return;
+      }
+
+      const isDoubleClick = (hit === lastSelectMesh) && (now - lastSelectTime < DOUBLE_CLICK_MS);
+      selectMesh(hit); // 第一次點擊套用選取狀態；已經選取的物件再點一次也維持選取，不會有變化
+      if (isDoubleClick) {
+        openObjectInfoPanel(hit);
+      }
+      lastSelectMesh = hit;
+      lastSelectTime = now;
+    }
+
+    // --- 桌面 Preview 模式：用滑鼠畫面座標設定 raycaster ---
+    function handleDesktopClickSelect(clientX, clientY) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+      );
+      raycaster.setFromCamera(ndc, camera);
+      handleSelectionRaycast();
+    }
+
+    // --- AR 模式：用 WebXR 'select' 事件(相當於「螢幕被點一下」)取得點擊當下那條準心射線 ---
+    // 這是 WebXR 官方定義的螢幕點擊手勢事件，跟畫面座標無關，會直接給一條已經在世界座標系裡的射線，
+    // 不需要像桌面版那樣自己把 clientX/clientY 轉成 NDC 再算方向。
+    function handleARSelect(event) {
+      if (!modelPlaced) return; // 模型還沒放置前，畫面上沒有可點的東西，直接跳過
+      const frame = event.frame;
+      const referenceSpace = renderer.xr.getReferenceSpace();
+      const targetRayPose = frame.getPose(event.inputSource.targetRaySpace, referenceSpace);
+      if (!targetRayPose) return;
+
+      const rayMatrix = new THREE.Matrix4().fromArray(targetRayPose.transform.matrix);
+      const rayOrigin = new THREE.Vector3().setFromMatrixPosition(rayMatrix);
+      const rayDirection = new THREE.Vector3(0, 0, -1).transformDirection(rayMatrix).normalize();
+
+      raycaster.set(rayOrigin, rayDirection);
+      handleSelectionRaycast();
+    }
 
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
@@ -916,6 +1165,7 @@
 
         xrSession = session;
         session.addEventListener('end', onSessionEnd);
+        session.addEventListener('select', handleARSelect); // 螢幕點擊手勢，用於物件選取/雙擊看資訊
 
         renderer.xr.setReferenceSpaceType('local');
         await renderer.xr.setSession(session);
@@ -942,8 +1192,10 @@
       hitTestSourceRequested = false;
       modelPlaced = false;
       planeEverDetected = false;
+      deselectMesh(); // 清掉選取狀態跟已套用的紅色材質，並關閉物件資訊面板，避免下次進 AR 時殘留舊狀態
       if (model) model.visible = false;
       if (furnitureModel) furnitureModel.visible = false;
+      if (pipeModel) pipeModel.visible = false;
       startBtn.style.display = 'block';
       startBtn.disabled = false;
       startBtn.textContent = '開始 AR 體驗';
@@ -1029,11 +1281,22 @@
     let lastPointerY = 0;
     const lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
+    // 點擊 vs 拖曳(看視角)的判斷門檻：位移/時間都在門檻內才算「點擊」，用來觸發物件選取，
+    // 超過門檻就當作正常的左鍵拖曳看視角，不觸發選取，兩者可以共用同一顆左鍵不互相干擾
+    const CLICK_MOVE_THRESHOLD = 6;   // px
+    const CLICK_TIME_THRESHOLD = 350; // ms
+    let clickStartX = 0;
+    let clickStartY = 0;
+    let clickStartTime = 0;
+
     function onLookPointerDown(event) {
       if (!previewModeActive || event.button !== 0) return;
       lookDragActive = true;
       lastPointerX = event.clientX;
       lastPointerY = event.clientY;
+      clickStartX = event.clientX;
+      clickStartY = event.clientY;
+      clickStartTime = performance.now();
       // 從目前攝影機的實際朝向反推 yaw/pitch，讓這次拖曳從目前視角銜接，不會瞬間跳掉
       lookEuler.setFromQuaternion(camera.quaternion, 'YXZ');
     }
@@ -1059,6 +1322,15 @@
 
     function onLookPointerUp(event) {
       if (event.button !== 0) return;
+      if (previewModeActive && lookDragActive) {
+        const dx = event.clientX - clickStartX;
+        const dy = event.clientY - clickStartY;
+        const moved = Math.sqrt(dx * dx + dy * dy);
+        const elapsed = performance.now() - clickStartTime;
+        if (moved < CLICK_MOVE_THRESHOLD && elapsed < CLICK_TIME_THRESHOLD) {
+          handleDesktopClickSelect(event.clientX, event.clientY);
+        }
+      }
       lookDragActive = false;
     }
 
@@ -1115,6 +1387,7 @@
         previewControls.update();
         updateMainLightPosition();
         syncFurnitureModel();
+        syncPipeModel();
         renderer.render(scene, camera);
       });
     }
@@ -1165,6 +1438,7 @@
 
       updateMainLightPosition();
       syncFurnitureModel();
+      syncPipeModel();
       renderer.render(scene, camera);
     }
 
